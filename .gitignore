@@ -16,3 +16,4 @@ models/
 *.sqlite3
 data/
 logs/
+mosquitto.log
