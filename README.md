@@ -14,8 +14,8 @@ Key features:
 - Persistent SQLite DB in the volume mount
 - Admin or guest login
 - Merge function in case a new detection doesn't categorize to an existing detection (slower cameras may track slow and give you a bad crop)
-- Custom tagging for categorization/gropping and alerting
-- E-mail alerting based on known, unknown, or custom tag
+- Custom tagging for categorization/grouping and alerting
+- E-mail alerting based on known, unknown, or custom tags
 - Can set friendly names for cameras (Axis defaults to using MAC addresses for naming)
 
 ![](./axis-face-dashboard.png)
@@ -59,4 +59,3 @@ D:\docker\axis-face\
 
 Security
 - As you can see, there is NO HTTPS so you should definitely put this behind an HTTPS proxy.
-- 
