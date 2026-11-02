@@ -4,6 +4,7 @@ A self contained docker based facial recognition application for Axis cameras.
 It could also be used with any IP camera that can send image snapshots via MQTT.
 
 I vibe coded this in about 4 hours using Google Gemini Argon 4 with medium thinking using this initial prompt:
+
 <code>
 I want help building a Docker based facial recognition server that will take cropped face images produced by Axis cameras that send images over MQTT. This will be running on a Windows 11 machine with Docker Desktop. It will use an Nvidia RTX 5090 for GPU acceleration. It should have a simple web UI that a user can associate names to detected faces and store all unknown faces. It should keep a historical record of when, which camera, and who was seen. It should be able to trigger email alerts when either known or unknown faces are seen. Keep only the best image(s) of a given face each hour to avoid using too much storage. Let's start by giving me a high level development plan to review and then we will walk through each step slowly as we build as I may have questions or clarifications as we go.
 </code> 
@@ -22,6 +23,7 @@ How to build and run it:
 - `docker compose up -d`
 - point browser to http://localhost:8000/
 
+```
 D:\docker\axis-face\
 ├── docker-compose.yaml
 ├── Dockerfile
@@ -44,3 +46,4 @@ D:\docker\axis-face\
     └── templates\
         ├── index.html          # Tailwind CSS Web UI (Faces table, History, Settings)
         └── login.html          # Initial login page
+```
