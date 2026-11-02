@@ -26,7 +26,7 @@ How to build and run it:
   - An Axis IP camera with an integrated deep learning processing unit (DLPU) setup to send com.axis.scene.object_snapshot.v1#1 via MQTT.  I've tested with ARTPEC-8, ARTPEC-9, and Ambarella CV25 SoC's
   - (optional) Nvidia GPU; really overkill for this but if you plan on extending this further into complex image recognition, it might become helpful.
 - `git clone https://github.com/hasherati/axis-face.git`
-- cp .env.example .env and update .env per your environment
+- `cp .env.example .env` and update .env per your environment
 - `docker compose up -d`
 - point browser to http://localhost:8000/
 
