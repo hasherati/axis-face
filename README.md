@@ -18,7 +18,7 @@ Key features:
 - E-mail alerting based on known, unknown, or custom tag
 - Can set friendly names for cameras (Axis defaults to using MAC addresses for naming)
 
-./axis-face-dashboard.png
+![](./axis-face-dashboard.png)
 
 How to build and run it:
 - Pre-reqs
