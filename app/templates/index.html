@@ -1,0 +1,569 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Axis Facial Recognition Server</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen font-sans">
+
+  {% set dis_attr = '' if is_admin else 'disabled' %}
+  {% set dis_cls = '' if is_admin else 'opacity-40 cursor-not-allowed pointer-events-none' %}
+
+  <!-- Modal Backdrop when Inline Gallery is Open (Blocks interactions with rest of GUI) -->
+  {% if gallery_person %}
+  <a href="/?tab=faces&sort_by={{ sort_by }}&std_tag_filter={{ std_tag_filter }}&custom_tag_filter={{ custom_tag_filter }}#person-row-{{ gallery_person.id }}"
+     title="Close Gallery"
+     class="fixed inset-0 bg-slate-950/75 backdrop-blur-[2px] z-40 cursor-default"></a>
+  {% endif %}
+
+  <!-- Top Header & Status Bar -->
+  <header class="bg-slate-800 border-b border-slate-700 px-6 py-4">
+    <div class="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-4">
+      <div class="flex items-center gap-3">
+        <div class="w-3 h-3 rounded-full {{ 'bg-emerald-400' if mqtt.connected else 'bg-red-500' }}"></div>
+        <h1 class="text-xl font-bold tracking-tight">Axis Facial Recognition Server</h1>
+        <span class="text-xs px-2.5 py-1 rounded-md font-medium {{ 'bg-emerald-900/70 text-emerald-300 border border-emerald-700' if gpu.active_mode == 'GPU' else 'bg-slate-700 text-slate-300' }}">
+          {{ gpu.active_mode }} Mode ({{ gpu.warmup_inference_ms }} ms)
+        </span>
+      </div>
+
+      <div class="flex flex-wrap items-center gap-5 text-sm text-slate-300">
+        <div>MQTT Msgs: <strong class="text-white">{{ mqtt.messages_received }}</strong> (Faces: <strong class="text-emerald-400">{{ mqtt.faces_matched_or_added }}</strong>)</div>
+        <div>Unique Faces: <strong class="text-white">{{ stats.total_persons }}</strong></div>
+        <div>Total Sightings: <strong class="text-white">{{ stats.total_sightings }}</strong></div>
+
+        <a href="/?tab={{ active_tab }}&sort_by={{ sort_by }}&std_tag_filter={{ std_tag_filter }}&custom_tag_filter={{ custom_tag_filter }}"
+           class="bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1.5 rounded text-xs font-medium">Refresh</a>
+
+        <!-- User Role Badge & Logout -->
+        <div class="flex items-center gap-2 border-l border-slate-700 pl-4">
+          <span class="text-xs px-2.5 py-1 rounded font-medium {{ 'bg-indigo-900/80 text-indigo-200 border border-indigo-700' if is_admin else 'bg-amber-900/60 text-amber-200 border border-amber-700' }}">
+            User: {{ user.username }} ({{ 'Full Access' if is_admin else 'View Only' }})
+          </span>
+          <form method="post" action="/logout" class="inline">
+            <button type="submit" class="bg-slate-700 hover:bg-slate-600 text-slate-200 px-2.5 py-1 rounded text-xs">
+              Logout
+            </button>
+          </form>
+        </div>
+      </div>
+    </div>
+
+    <!-- Navigation Tabs -->
+    <div class="max-w-7xl mx-auto mt-4 flex gap-2 border-t border-slate-700 pt-3">
+      <a href="/?tab=faces" class="px-4 py-1.5 rounded text-sm font-medium {{ 'bg-indigo-600 text-white' if active_tab == 'faces' else 'text-slate-300 hover:bg-slate-700' }}">
+        Unique Faces ({{ stats.total_persons }})
+      </a>
+      <a href="/?tab=history" class="px-4 py-1.5 rounded text-sm font-medium {{ 'bg-indigo-600 text-white' if active_tab == 'history' else 'text-slate-300 hover:bg-slate-700' }}">
+        Sighting History
+      </a>
+      <a href="/?tab=settings" class="px-4 py-1.5 rounded text-sm font-medium {{ 'bg-indigo-600 text-white' if active_tab == 'settings' else 'text-slate-300 hover:bg-slate-700' }}">
+        Tags, Email & Camera Settings
+      </a>
+    </div>
+  </header>
+
+  <main class="max-w-7xl mx-auto p-6">
+    {% if flash %}
+    <div class="mb-4 bg-emerald-900/60 border border-emerald-600 text-emerald-200 px-4 py-2.5 rounded text-sm relative z-50">
+      {{ flash }}
+    </div>
+    {% endif %}
+
+    <!-- TAB 1: UNIQUE FACES DIRECTORY (1 PER ROW) -->
+    {% if active_tab == 'faces' %}
+    <div class="bg-slate-800 border border-slate-700 rounded-lg overflow-hidden shadow">
+      <!-- Header & Sort / Filter Controls -->
+      <div class="px-4 py-3 border-b border-slate-700 flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <h2 class="font-semibold text-slate-200">Detected Unique Faces (1 Per Row)</h2>
+          <span class="text-xs text-slate-400">Keeping Top {{ max_images_per_hour }} Best Images Per Person Per Hour</span>
+        </div>
+
+        <form method="get" action="/" class="flex flex-wrap items-center gap-2 text-xs">
+          <input type="hidden" name="tab" value="faces" />
+
+          <label class="text-slate-400">Sort By:</label>
+          <select name="sort_by" onchange="this.form.submit()"
+                  class="bg-slate-900 border border-slate-600 rounded px-2.5 py-1.5 text-slate-200">
+            <option value="last_seen_desc" {{ 'selected' if sort_by == 'last_seen_desc' else '' }}>Last Seen (Newest)</option>
+            <option value="std_tag_asc" {{ 'selected' if sort_by == 'std_tag_asc' else '' }}>Standard Tag (Known → Unknown)</option>
+            <option value="std_tag_desc" {{ 'selected' if sort_by == 'std_tag_desc' else '' }}>Standard Tag (Unknown → Known)</option>
+            <option value="custom_tag_asc" {{ 'selected' if sort_by == 'custom_tag_asc' else '' }}>Custom Tag (A → Z)</option>
+            <option value="custom_tag_desc" {{ 'selected' if sort_by == 'custom_tag_desc' else '' }}>Custom Tag (Z → A)</option>
+            <option value="name_asc" {{ 'selected' if sort_by == 'name_asc' else '' }}>Name (A → Z)</option>
+            <option value="sightings_desc" {{ 'selected' if sort_by == 'sightings_desc' else '' }}>Most Sightings</option>
+          </select>
+
+          <label class="text-slate-400 ml-2">Standard Tag:</label>
+          <select name="std_tag_filter" onchange="this.form.submit()"
+                  class="bg-slate-900 border border-slate-600 rounded px-2.5 py-1.5 text-slate-200">
+            <option value="">All</option>
+            <option value="Known" {{ 'selected' if std_tag_filter == 'Known' else '' }}>Known Only</option>
+            <option value="Unknown" {{ 'selected' if std_tag_filter == 'Unknown' else '' }}>Unknown Only</option>
+          </select>
+
+          <label class="text-slate-400 ml-2">Custom Tag:</label>
+          <select name="custom_tag_filter" onchange="this.form.submit()"
+                  class="bg-slate-900 border border-slate-600 rounded px-2.5 py-1.5 text-slate-200">
+            <option value="">All</option>
+            <option value="__none__" {{ 'selected' if custom_tag_filter == '__none__' else '' }}>No Custom Tag</option>
+            {% for ct in custom_tags %}
+            <option value="{{ ct.name }}" {{ 'selected' if custom_tag_filter == ct.name else '' }}>{{ ct.name }}</option>
+            {% endfor %}
+          </select>
+
+          {% if sort_by != 'last_seen_desc' or std_tag_filter or custom_tag_filter %}
+          <a href="/?tab=faces" class="bg-slate-700 hover:bg-slate-600 text-slate-200 px-2.5 py-1.5 rounded">Reset</a>
+          {% endif %}
+        </form>
+      </div>
+
+      <div class="overflow-x-auto">
+        <table class="w-full text-left border-collapse text-sm">
+          <thead>
+            <tr class="bg-slate-900/60 text-slate-400 text-xs uppercase border-b border-slate-700">
+              <th class="py-3 px-4">Face</th>
+              <th class="py-3 px-4">Name, Standard Tag, Custom Tag & Alert</th>
+              <th class="py-3 px-4">Last Seen & Camera</th>
+              <th class="py-3 px-4">First Seen</th>
+              <th class="py-3 px-4 text-center">Sightings</th>
+              <th class="py-3 px-4">Merge Duplicate</th>
+              <th class="py-3 px-4 text-right">Actions</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-700/70">
+            {% for p in persons %}
+            {% set is_open_gallery = (gallery_person and gallery_person.id == p.id) %}
+            <tr id="person-row-{{ p.id }}" class="{{ 'bg-slate-800 relative z-50 ring-2 ring-indigo-500' if is_open_gallery else 'hover:bg-slate-750/40' }}">
+              <!-- Best Avatar Thumbnail -->
+              <td class="py-3 px-4">
+                {% if p.best_image_path %}
+                <a href="/?tab=faces&gallery_id={{ p.id }}&sort_by={{ sort_by }}&std_tag_filter={{ std_tag_filter }}&custom_tag_filter={{ custom_tag_filter }}#person-row-{{ p.id }}">
+                  <img src="/images/{{ p.best_image_path }}" alt="{{ p.name }}"
+                       class="w-16 h-16 object-cover rounded-lg border border-slate-600 hover:border-indigo-400 transition" />
+                </a>
+                {% else %}
+                <div class="w-16 h-16 rounded-lg bg-slate-700 flex items-center justify-center text-xs text-slate-400">No Img</div>
+                {% endif %}
+                <div class="text-[11px] text-slate-400 mt-1 text-center">Q: {{ "%.2f"|format(p.best_quality_score or 0) }}</div>
+              </td>
+
+              <!-- Inline Update Form (Name, Standard Tag, Custom Tag, Alert Rule) -->
+              <td class="py-3 px-4">
+                <form method="post" action="/ui/person/{{ p.id }}/update" class="flex flex-wrap items-center gap-2">
+                  <input type="hidden" name="sort_by" value="{{ sort_by }}" />
+                  <input type="hidden" name="std_tag_filter" value="{{ std_tag_filter }}" />
+                  <input type="hidden" name="custom_tag_filter" value="{{ custom_tag_filter }}" />
+
+                  <input type="text" name="name" value="{{ p.name }}" {{ dis_attr }}
+                         class="bg-slate-900 border border-slate-600 rounded px-2.5 py-1.5 text-sm text-white w-36 focus:border-indigo-500 focus:outline-none {{ dis_cls }}" />
+
+                  <select name="person_type" title="Standard Tag" {{ dis_attr }}
+                          class="bg-slate-900 border border-slate-600 rounded px-2 py-1.5 text-xs font-medium {{ 'text-emerald-400' if p.person_type == 'Known' else 'text-amber-400' }} {{ dis_cls }}">
+                    <option value="Unknown" {{ 'selected' if p.person_type == 'Unknown' else '' }}>Unknown</option>
+                    <option value="Known" {{ 'selected' if p.person_type == 'Known' else '' }}>Known</option>
+                  </select>
+
+                  <select name="custom_tag" title="Custom Tag (Max 1)" {{ dis_attr }}
+                          class="bg-slate-900 border border-slate-600 rounded px-2 py-1.5 text-xs text-cyan-300 {{ dis_cls }}">
+                    <option value="">-- No Custom Tag --</option>
+                    {% for ct in custom_tags %}
+                    <option value="{{ ct.name }}" {{ 'selected' if p.custom_tag == ct.name else '' }}>
+                      {{ ct.name }}{{ ' 🔔' if ct.alert_enabled else '' }}
+                    </option>
+                    {% endfor %}
+                  </select>
+
+                  <select name="alert_rule" title="Person Email Alert Override" {{ dis_attr }}
+                          class="bg-slate-900 border border-slate-600 rounded px-2 py-1.5 text-xs text-slate-200 {{ dis_cls }}">
+                    <option value="default" {{ 'selected' if p.alert_rule == 'default' else '' }}>Tag / Global Rule</option>
+                    <option value="always" {{ 'selected' if p.alert_rule == 'always' else '' }}>Always Alert</option>
+                    <option value="never" {{ 'selected' if p.alert_rule == 'never' else '' }}>Never Alert</option>
+                  </select>
+
+                  <button type="submit" {{ dis_attr }}
+                          class="bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1.5 rounded text-xs font-medium {{ dis_cls }}">
+                    Save
+                  </button>
+                </form>
+              </td>
+
+              <!-- Last Seen & Camera -->
+              <td class="py-3 px-4">
+                <div class="font-medium text-slate-200">{{ p.last_seen.replace('T', ' ') }}</div>
+                <span class="inline-block mt-1 text-xs bg-slate-700 text-indigo-300 px-2 py-0.5 rounded">
+                  {{ p.camera_friendly_name }}
+                </span>
+              </td>
+
+              <!-- First Seen -->
+              <td class="py-3 px-4 text-slate-400 text-xs">
+                {{ p.first_seen.replace('T', ' ') }}
+              </td>
+
+              <!-- Total Sightings & Stored Images -->
+              <td class="py-3 px-4 text-center">
+                <div class="text-base font-bold text-white">{{ p.total_sightings }}</div>
+                <a href="/?tab=faces&gallery_id={{ p.id }}&sort_by={{ sort_by }}&std_tag_filter={{ std_tag_filter }}&custom_tag_filter={{ custom_tag_filter }}#person-row-{{ p.id }}"
+                   class="text-xs text-indigo-400 hover:underline">
+                  {{ p.stored_images_count }} saved imgs
+                </a>
+              </td>
+
+              <!-- Merge Into Another Person -->
+              <td class="py-3 px-4">
+                <form method="post" action="/ui/person/{{ p.id }}/merge" class="flex items-center gap-1.5"
+                      onsubmit="return confirm('Merge {{ p.name }} into the selected person?');">
+                  <select name="target_id" required {{ dis_attr }}
+                          class="bg-slate-900 border border-slate-600 rounded px-2 py-1 text-xs text-slate-300 w-32 {{ dis_cls }}">
+                    <option value="">Merge into...</option>
+                    {% for other in all_persons if other.id != p.id %}
+                    <option value="{{ other.id }}">{{ other.name }} (#{{ other.id }})</option>
+                    {% endfor %}
+                  </select>
+                  <button type="submit" {{ dis_attr }}
+                          class="bg-slate-700 hover:bg-slate-600 text-slate-200 px-2 py-1 rounded text-xs {{ dis_cls }}">
+                    Merge
+                  </button>
+                </form>
+              </td>
+
+              <!-- Actions -->
+              <td class="py-3 px-4 text-right">
+                <div class="flex items-center justify-end gap-2">
+                  {% if is_open_gallery %}
+                  <a href="/?tab=faces&sort_by={{ sort_by }}&std_tag_filter={{ std_tag_filter }}&custom_tag_filter={{ custom_tag_filter }}#person-row-{{ p.id }}"
+                     class="bg-amber-600 hover:bg-amber-500 text-white px-2.5 py-1 rounded text-xs font-medium">
+                    Close
+                  </a>
+                  {% else %}
+                  <a href="/?tab=faces&gallery_id={{ p.id }}&sort_by={{ sort_by }}&std_tag_filter={{ std_tag_filter }}&custom_tag_filter={{ custom_tag_filter }}#person-row-{{ p.id }}"
+                     class="bg-slate-700 hover:bg-slate-600 text-slate-200 px-2.5 py-1 rounded text-xs">
+                    Images
+                  </a>
+                  {% endif %}
+                  <form method="post" action="/ui/person/{{ p.id }}/delete"
+                        onsubmit="return confirm('Delete {{ p.name }} and all their stored images?');">
+                    <button type="submit" {{ dis_attr }}
+                            class="bg-red-900/60 hover:bg-red-700 text-red-200 px-2.5 py-1 rounded text-xs {{ dis_cls }}">
+                      Delete
+                    </button>
+                  </form>
+                </div>
+              </td>
+            </tr>
+
+            <!-- INLINE POP-OUT GALLERY DIRECTLY BELOW THIS PERSON'S ROW -->
+            {% if is_open_gallery %}
+            <tr class="relative z-50 bg-slate-800">
+              <td colspan="7" class="p-0">
+                <div class="bg-slate-800 border-2 border-indigo-500 rounded-b-xl shadow-2xl p-5 m-2 mt-0">
+                  <div class="flex items-center justify-between mb-4 border-b border-slate-700 pb-3">
+                    <div>
+                      <h3 class="text-base font-bold text-white">
+                        Stored Hourly Best Images for <span class="text-indigo-400">{{ gallery_person.name }}</span>
+                      </h3>
+                      <p class="text-xs text-slate-400">Close this gallery pop-out before making changes to other rows.</p>
+                    </div>
+                    <a href="/?tab=faces&sort_by={{ sort_by }}&std_tag_filter={{ std_tag_filter }}&custom_tag_filter={{ custom_tag_filter }}#person-row-{{ p.id }}"
+                       class="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-1.5 rounded text-xs font-semibold shadow">
+                      ✕ Close Gallery
+                    </a>
+                  </div>
+
+                  <div class="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 gap-4">
+                    {% for img in gallery_images %}
+                    <div class="bg-slate-900 border border-slate-700 rounded-lg p-2 flex flex-col justify-between">
+                      <div>
+                        <a href="/images/{{ img.image_path }}" target="_blank">
+                          <img src="/images/{{ img.image_path }}" class="w-full h-32 object-cover rounded mb-2 hover:opacity-90" />
+                        </a>
+                        <div class="text-xs text-slate-300 font-medium">Hour: {{ img.hour_bucket }}</div>
+                        <div class="text-[11px] text-slate-400">Time: {{ img.captured_at.replace('T', ' ') }}</div>
+                        <div class="text-[11px] text-emerald-400">Quality: {{ "%.2f"|format(img.quality_score) }}</div>
+                      </div>
+                      <form method="post" action="/ui/image/{{ img.id }}/delete" class="mt-2 pt-2 border-t border-slate-800"
+                            onsubmit="return confirm('Permanently delete this image from disk?');">
+                        <input type="hidden" name="person_id" value="{{ gallery_person.id }}" />
+                        <input type="hidden" name="sort_by" value="{{ sort_by }}" />
+                        <input type="hidden" name="std_tag_filter" value="{{ std_tag_filter }}" />
+                        <input type="hidden" name="custom_tag_filter" value="{{ custom_tag_filter }}" />
+                        <button type="submit" {{ dis_attr }}
+                                class="w-full bg-red-900/60 hover:bg-red-700 text-red-200 py-1 rounded text-xs font-medium {{ dis_cls }}">
+                          Delete Image
+                        </button>
+                      </form>
+                    </div>
+                    {% else %}
+                    <div class="col-span-6 text-sm text-slate-400 py-4 text-center">No stored images remaining for this person.</div>
+                    {% endfor %}
+                  </div>
+                </div>
+              </td>
+            </tr>
+            {% endif %}
+
+            {% else %}
+            <tr>
+              <td colspan="7" class="py-8 text-center text-slate-400">No faces match the current filter.</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- TAB 2: SIGHTING HISTORY -->
+    {% if active_tab == 'history' %}
+    <div class="bg-slate-800 border border-slate-700 rounded-lg overflow-hidden shadow">
+      <div class="px-4 py-3 border-b border-slate-700 flex flex-wrap items-center justify-between gap-4">
+        <h2 class="font-semibold text-slate-200">Historical Sighting Log (Recent 200)</h2>
+        <form method="get" action="/" class="flex items-center gap-2 text-xs">
+          <input type="hidden" name="tab" value="history" />
+          <select name="person_id" class="bg-slate-900 border border-slate-600 rounded px-2.5 py-1.5 text-slate-200">
+            <option value="">All People</option>
+            {% for p in all_persons %}
+            <option value="{{ p.id }}" {{ 'selected' if filter_person_id == p.id else '' }}>{{ p.name }}</option>
+            {% endfor %}
+          </select>
+          <select name="camera_id" class="bg-slate-900 border border-slate-600 rounded px-2.5 py-1.5 text-slate-200">
+            <option value="">All Cameras</option>
+            {% for c in cameras %}
+            <option value="{{ c.camera_id }}" {{ 'selected' if filter_camera_id == c.camera_id else '' }}>{{ c.friendly_name }}</option>
+            {% endfor %}
+          </select>
+          <button type="submit" class="bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1.5 rounded">Filter</button>
+          <a href="/?tab=history" class="bg-slate-700 hover:bg-slate-600 px-3 py-1.5 rounded">Clear</a>
+        </form>
+      </div>
+
+      <table class="w-full text-left border-collapse text-sm">
+        <thead>
+          <tr class="bg-slate-900/60 text-slate-400 text-xs uppercase border-b border-slate-700">
+            <th class="py-3 px-4">Snapshot</th>
+            <th class="py-3 px-4">Timestamp</th>
+            <th class="py-3 px-4">Person</th>
+            <th class="py-3 px-4">Standard Tag</th>
+            <th class="py-3 px-4">Custom Tag</th>
+            <th class="py-3 px-4">Camera</th>
+            <th class="py-3 px-4">Similarity</th>
+            <th class="py-3 px-4">Quality Score</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-700/70">
+          {% for s in sightings %}
+          <tr class="hover:bg-slate-750/40">
+            <td class="py-2.5 px-4">
+              {% if s.image_path %}
+              <a href="/images/{{ s.image_path }}" target="_blank">
+                <img src="/images/{{ s.image_path }}" class="w-12 h-12 object-cover rounded border border-slate-600" />
+              </a>
+              {% elif s.best_image_path %}
+              <img src="/images/{{ s.best_image_path }}" class="w-12 h-12 object-cover rounded border border-slate-700 opacity-60" title="Hourly pruned or deleted; showing person avatar" />
+              {% endif %}
+            </td>
+            <td class="py-2.5 px-4 text-slate-200 font-mono text-xs">{{ s.captured_at.replace('T', ' ') }}</td>
+            <td class="py-2.5 px-4 font-medium text-white">{{ s.person_name }}</td>
+            <td class="py-2.5 px-4">
+              <span class="px-2 py-0.5 rounded text-xs {{ 'bg-emerald-900/60 text-emerald-300' if s.person_type == 'Known' else 'bg-amber-900/60 text-amber-300' }}">
+                {{ s.person_type }}
+              </span>
+            </td>
+            <td class="py-2.5 px-4">
+              {% if s.custom_tag %}
+              <span class="px-2 py-0.5 rounded text-xs bg-cyan-900/60 text-cyan-300">{{ s.custom_tag }}</span>
+              {% else %}
+              <span class="text-xs text-slate-500">—</span>
+              {% endif %}
+            </td>
+            <td class="py-2.5 px-4 text-indigo-300 text-xs">{{ s.camera_friendly_name }}</td>
+            <td class="py-2.5 px-4 text-slate-300 text-xs">{{ "%.2f"|format(s.similarity) }}</td>
+            <td class="py-2.5 px-4 text-slate-300 text-xs">{{ "%.2f"|format(s.quality_score) }}</td>
+          </tr>
+          {% else %}
+          <tr>
+            <td colspan="8" class="py-8 text-center text-slate-400">No sightings recorded yet.</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+
+    <!-- TAB 3: CUSTOM TAGS, EMAIL ALERT & CAMERA SETTINGS -->
+    {% if active_tab == 'settings' %}
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+      <!-- Custom Tags & Alert Rules Card -->
+      <div class="bg-slate-800 border border-slate-700 rounded-lg p-5">
+        <h2 class="text-base font-semibold text-white mb-2 border-b border-slate-700 pb-2">Custom Tags & Tag Alerts</h2>
+        <p class="text-xs text-slate-400 mb-4">
+          Create custom tags (e.g., <em>Family</em>, <em>Delivery</em>, <em>VIP</em>) and choose whether detecting a person with that tag triggers an email alert.
+        </p>
+
+        <!-- Create / Update Custom Tag Form -->
+        <form method="post" action="/ui/tags/upsert" class="flex items-center gap-2 mb-4">
+          <input type="text" name="name" required placeholder="New tag name..." {{ dis_attr }}
+                 class="flex-1 bg-slate-900 border border-slate-600 rounded px-2.5 py-1.5 text-sm text-white {{ dis_cls }}" />
+          <select name="alert_enabled" {{ dis_attr }}
+                  class="bg-slate-900 border border-slate-600 rounded px-2 py-1.5 text-xs text-slate-200 {{ dis_cls }}">
+            <option value="true">Alert: ON 🔔</option>
+            <option value="false">Alert: OFF</option>
+          </select>
+          <button type="submit" {{ dis_attr }}
+                  class="bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1.5 rounded text-xs font-medium {{ dis_cls }}">
+            Add
+          </button>
+        </form>
+
+        <!-- Existing Custom Tags List -->
+        <div class="space-y-2">
+          {% for ct in custom_tags %}
+          <div class="flex items-center justify-between bg-slate-900/70 border border-slate-700 rounded px-3 py-2 text-sm">
+            <span class="font-medium text-cyan-300">{{ ct.name }}</span>
+            <div class="flex items-center gap-2">
+              <form method="post" action="/ui/tags/upsert" class="inline">
+                <input type="hidden" name="name" value="{{ ct.name }}" />
+                <input type="hidden" name="alert_enabled" value="{{ 'false' if ct.alert_enabled else 'true' }}" />
+                <button type="submit" {{ dis_attr }}
+                        class="px-2.5 py-1 rounded text-xs font-medium {{ 'bg-emerald-900/70 text-emerald-300 border border-emerald-700' if ct.alert_enabled else 'bg-slate-800 text-slate-400 border border-slate-700' }} {{ dis_cls }}">
+                  {{ 'Email Alert: ON 🔔' if ct.alert_enabled else 'Email Alert: OFF' }}
+                </button>
+              </form>
+              <form method="post" action="/ui/tags/delete" class="inline"
+                    onsubmit="return confirm('Delete custom tag {{ ct.name }}?');">
+                <input type="hidden" name="name" value="{{ ct.name }}" />
+                <button type="submit" {{ dis_attr }}
+                        class="bg-red-900/60 hover:bg-red-700 text-red-200 px-2 py-1 rounded text-xs {{ dis_cls }}">
+                  Delete
+                </button>
+              </form>
+            </div>
+          </div>
+          {% else %}
+          <p class="text-xs text-slate-400">No custom tags created yet.</p>
+          {% endfor %}
+        </div>
+      </div>
+
+      <!-- Email Settings Card -->
+      <div class="bg-slate-800 border border-slate-700 rounded-lg p-5">
+        <h2 class="text-base font-semibold text-white mb-4 border-b border-slate-700 pb-2">Global Email Alert Settings</h2>
+        <form method="post" action="/ui/settings/email" class="space-y-3 text-sm">
+          <div class="flex items-center justify-between">
+            <label class="text-slate-300 font-medium">Enable Email Alerts Globally</label>
+            <select name="alert_enabled" {{ dis_attr }} class="bg-slate-900 border border-slate-600 rounded px-3 py-1.5 {{ dis_cls }}">
+              <option value="true" {{ 'selected' if cfg.alert_enabled == 'true' else '' }}>Enabled</option>
+              <option value="false" {{ 'selected' if cfg.alert_enabled != 'true' else '' }}>Disabled</option>
+            </select>
+          </div>
+
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="block text-xs text-slate-400 mb-1">Alert on All Known Faces</label>
+              <select name="alert_on_known" {{ dis_attr }} class="w-full bg-slate-900 border border-slate-600 rounded px-3 py-1.5 {{ dis_cls }}">
+                <option value="true" {{ 'selected' if cfg.alert_on_known == 'true' else '' }}>Yes</option>
+                <option value="false" {{ 'selected' if cfg.alert_on_known != 'true' else '' }}>No (Use Custom Tags)</option>
+              </select>
+            </div>
+            <div>
+              <label class="block text-xs text-slate-400 mb-1">Alert on All Unknown Faces</label>
+              <select name="alert_on_unknown" {{ dis_attr }} class="w-full bg-slate-900 border border-slate-600 rounded px-3 py-1.5 {{ dis_cls }}">
+                <option value="true" {{ 'selected' if cfg.alert_on_unknown == 'true' else '' }}>Yes</option>
+                <option value="false" {{ 'selected' if cfg.alert_on_unknown != 'true' else '' }}>No (Use Custom Tags)</option>
+              </select>
+            </div>
+          </div>
+
+          <div>
+            <label class="block text-xs text-slate-400 mb-1">Per-Person Cooldown (Minutes)</label>
+            <input type="number" name="alert_cooldown_minutes" value="{{ cfg.alert_cooldown_minutes }}" {{ dis_attr }}
+                   class="w-full bg-slate-900 border border-slate-600 rounded px-3 py-1.5 {{ dis_cls }}" />
+          </div>
+
+          <div class="grid grid-cols-3 gap-3">
+            <div class="col-span-2">
+              <label class="block text-xs text-slate-400 mb-1">SMTP Host</label>
+              <input type="text" name="smtp_host" value="{{ cfg.smtp_host }}" {{ dis_attr }}
+                     class="w-full bg-slate-900 border border-slate-600 rounded px-3 py-1.5 {{ dis_cls }}" />
+            </div>
+            <div>
+              <label class="block text-xs text-slate-400 mb-1">SMTP Port</label>
+              <input type="text" name="smtp_port" value="{{ cfg.smtp_port }}" {{ dis_attr }}
+                     class="w-full bg-slate-900 border border-slate-600 rounded px-3 py-1.5 {{ dis_cls }}" />
+            </div>
+          </div>
+
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="block text-xs text-slate-400 mb-1">SMTP Username</label>
+              <input type="text" name="smtp_username" value="{{ cfg.smtp_username }}" {{ dis_attr }}
+                     class="w-full bg-slate-900 border border-slate-600 rounded px-3 py-1.5 {{ dis_cls }}" />
+            </div>
+            <div>
+              <label class="block text-xs text-slate-400 mb-1">SMTP Password</label>
+              <input type="password" name="smtp_password" value="{{ cfg.smtp_password }}" {{ dis_attr }}
+                     class="w-full bg-slate-900 border border-slate-600 rounded px-3 py-1.5 {{ dis_cls }}" />
+            </div>
+          </div>
+
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label class="block text-xs text-slate-400 mb-1">From Email</label>
+              <input type="text" name="alert_from_email" value="{{ cfg.alert_from_email }}" {{ dis_attr }}
+                     class="w-full bg-slate-900 border border-slate-600 rounded px-3 py-1.5 {{ dis_cls }}" />
+            </div>
+            <div>
+              <label class="block text-xs text-slate-400 mb-1">To Email (Recipient)</label>
+              <input type="text" name="alert_to_email" value="{{ cfg.alert_to_email }}" {{ dis_attr }}
+                     class="w-full bg-slate-900 border border-slate-600 rounded px-3 py-1.5 {{ dis_cls }}" />
+            </div>
+          </div>
+
+          <div class="pt-2 flex items-center gap-3">
+            <button type="submit" {{ dis_attr }}
+                    class="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded font-medium text-xs {{ dis_cls }}">
+              Save Email Settings
+            </button>
+          </div>
+        </form>
+
+        <form method="post" action="/ui/settings/test-email" class="mt-3 pt-3 border-t border-slate-700">
+          <button type="submit" {{ dis_attr }}
+                  class="bg-slate-700 hover:bg-slate-600 text-slate-200 px-3 py-1.5 rounded text-xs {{ dis_cls }}">
+            Send Test Email Now
+          </button>
+        </form>
+      </div>
+
+      <!-- Camera Friendly Names Card -->
+      <div class="bg-slate-800 border border-slate-700 rounded-lg p-5">
+        <h2 class="text-base font-semibold text-white mb-4 border-b border-slate-700 pb-2">Axis Camera Friendly Names</h2>
+        <div class="space-y-3">
+          {% for cam in cameras %}
+          <form method="post" action="/ui/camera/update" class="flex items-center gap-2 text-sm">
+            <input type="hidden" name="camera_id" value="{{ cam.camera_id }}" />
+            <span class="font-mono text-xs text-slate-400 w-36 truncate" title="{{ cam.camera_id }}">{{ cam.camera_id }}</span>
+            <input type="text" name="friendly_name" value="{{ cam.friendly_name }}" {{ dis_attr }}
+                   class="flex-1 bg-slate-900 border border-slate-600 rounded px-2.5 py-1.5 text-sm text-white {{ dis_cls }}" />
+            <button type="submit" {{ dis_attr }}
+                    class="bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1.5 rounded text-xs {{ dis_cls }}">
+              Rename
+            </button>
+          </form>
+          {% else %}
+          <p class="text-sm text-slate-400">No cameras detected yet.</p>
+          {% endfor %}
+        </div>
+      </div>
+
+    </div>
+    {% endif %}
+  </main>
+
+</body>
+</html>

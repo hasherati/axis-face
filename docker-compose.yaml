@@ -1,0 +1,26 @@
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: axis-mosquitto
+    restart: unless-stopped
+    ports:
+      - "1883:1883"
+    volumes:
+      - D:/docker/axis-face/mosquitto/config:/mosquitto/config
+      - D:/docker/axis-face/mosquitto/data:/mosquitto/data
+      - D:/docker/axis-face/mosquitto/log:/mosquitto/log
+
+  face-server:
+    build: .
+    container_name: axis-face-server
+    restart: unless-stopped
+    depends_on:
+      - mosquitto
+    ports:
+      - "${WEB_PORT:-8000}:8000"
+    env_file:
+      - .env
+    volumes:
+      - D:/docker/axis-face/app:/app
+      - D:/docker/axis-face/data:/data
+      - D:/docker/axis-face/data/models:/root/.insightface

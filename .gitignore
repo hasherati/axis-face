@@ -1,0 +1,18 @@
+# Secrets — never commit
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Project-specific — adjust to what's actually in your folder:
+# model weights, face databases, image datasets, logs, etc.
+models/
+*.db
+*.sqlite3
+data/
+logs/
