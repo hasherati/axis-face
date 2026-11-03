@@ -77,6 +77,20 @@ IMAGES_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/images", StaticFiles(directory=str(IMAGES_DIR)), name="images")
 templates = Jinja2Templates(directory="/app/templates")
 
+PUBLIC_PATHS = {"/login"}
+ADMIN_ONLY_PATHS = {"/docs", "/redoc", "/openapi.json"}
+
+@app.middleware("http")
+async def enforce_access(request: Request, call_next):
+    path = request.url.path
+    if path in PUBLIC_PATHS:
+        return await call_next(request)
+    user = get_current_user(request)
+    if not user:
+        return RedirectResponse(url="/login", status_code=303)
+    if path in ADMIN_ONLY_PATHS and not user["is_admin"]:
+        return RedirectResponse(url="/login", status_code=303)
+    return await call_next(request)
 
 @app.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request, error: Optional[str] = None):
