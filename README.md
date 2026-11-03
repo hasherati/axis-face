@@ -27,7 +27,11 @@ How to build and run it:
   - (optional) Nvidia GPU; really overkill for this but if you plan on extending this further into complex image recognition, it might become helpful.
 - `git clone https://github.com/hasherati/axis-face.git`
 - `cp .env.example .env` and update .env per your environment
-- `docker compose up -d`
+- For default CPU only detection inference:
+  - `docker compose up -d`
+- For GPU accelerated detection inference:
+  - change EXECUTION_MODE=GPU in .env
+  - `docker compose -f docker-compose.yaml -f docker-compose.gpu.yaml up -d`
 - point browser to http://localhost:8000/
 
 Here are all the files and what they do:
