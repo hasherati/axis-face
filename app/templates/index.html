@@ -279,7 +279,7 @@
                     <div class="bg-slate-900 border border-slate-700 rounded-lg p-2 flex flex-col justify-between">
                       <div>
                         <a href="/images/{{ img.image_path }}" target="_blank">
-                          <img src="/images/{{ img.image_path }}" class="w-full h-32 object-cover rounded mb-2 hover:opacity-90" />
+                          <img src="/images/{{ img.image_path }}" class="w-full h-auto rounded mb-2 hover:opacity-90" />
                         </a>
                         <div class="text-xs text-slate-300 font-medium">Hour: {{ img.hour_bucket }}</div>
                         <div class="text-[11px] text-slate-400">Time: {{ img.captured_at.replace('T', ' ') }}</div>
