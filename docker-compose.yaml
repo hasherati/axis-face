@@ -12,6 +12,7 @@ services:
 
   face-server:
     build: .
+    image: axis-face-server:latest
     container_name: axis-face-server
     restart: unless-stopped
     depends_on:
